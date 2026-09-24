@@ -9,3 +9,5 @@ results/
 tests/.cache/
 logs/
 signals/
+.dashboard_token
+config.json

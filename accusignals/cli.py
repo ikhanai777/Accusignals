@@ -5,6 +5,7 @@
   download     cache historical klines to CSV (real Binance data)
   backtest     backtest on downloaded Binance history
   walkforward  walk-forward optimisation (out-of-sample results)
+  dashboard    local web UI (mobile friendly) with the live scanner built in
 
 Add --json for machine-readable output (one JSON object per line on stdout;
 logs go to stderr and logs/accusignals.log). Exit codes: 0 ok, 2 Binance
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import secrets
 import sys
 from dataclasses import fields, replace
 from logging.handlers import RotatingFileHandler
@@ -24,7 +26,7 @@ import pandas as pd
 import requests
 
 from .backtest import run_backtest
-from .data import BinanceClient, load_csv, missing_bars, pandas_freq, save_csv
+from .data import BinanceClient, load_history
 from .optimize import walk_forward
 from .risk import RiskConfig
 from .scanner import Scanner
@@ -77,33 +79,7 @@ def _symbols(args, client: BinanceClient) -> list[str]:
 
 
 def _load_data(args, client: BinanceClient, scfg: StrategyConfig) -> dict[str, pd.DataFrame]:
-    """Download Binance history, or top up the local cache with the newest
-    candles so a cached file is never stale."""
-    data = {}
-    now = client.now()
-    for sym in _symbols(args, client):
-        path = Path(args.data_dir) / args.market / f"{sym}_{scfg.interval}.csv"
-        if path.exists() and not args.refresh:
-            df = load_csv(path)
-            if df.index[0] > now - pd.Timedelta(days=args.days):  # cache too short: fetch the full window
-                df = client.history(sym, scfg.interval, args.days)
-            else:
-                df = client.update(df, sym, scfg.interval)
-        else:
-            log.info("downloading %s %s %dd from Binance %s", sym, scfg.interval, args.days, args.market)
-            df = client.history(sym, scfg.interval, args.days)
-        df = df.drop(columns=["close_time"], errors="ignore")
-        df = df[df.index + pd.Timedelta(pandas_freq(scfg.interval)) <= now]  # closed candles only
-        save_csv(df, path)
-        df = df[df.index >= now - pd.Timedelta(days=args.days)]
-        gaps = missing_bars(df, scfg.interval)
-        if gaps:
-            log.warning("%s: %d missing candles in history (exchange downtime)", sym, gaps)
-        if len(df) < 500:
-            log.warning("%s: only %d candles, skipping", sym, len(df))
-            continue
-        data[sym] = df
-    return data
+    return load_history(client, _symbols(args, client), scfg.interval, args.days, args.data_dir, args.refresh)
 
 
 def _report(title: str, m: dict, as_json: bool, extra: dict | None = None) -> None:
@@ -151,6 +127,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="append every signal here as JSON lines ('' to disable)")
     sp.add_argument("--cooldown-bars", type=int, default=6, help="suppress repeat alerts for the same symbol/side")
 
+    sp = sub.add_parser("dashboard", help="local web UI")
+    common(sp)
+    sp.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to open it from your phone on the same Wi-Fi")
+    sp.add_argument("--port", type=int, default=8765)
+    sp.add_argument("--token", help="access token (auto-generated when --host is not localhost)")
+    sp.add_argument("--start", action="store_true", help="start the scanner immediately")
+    sp.add_argument("--no-footprint", action="store_true")
+    sp.add_argument("--notify", action="store_true", help="also push to Telegram / webhook")
+
     for name, help_ in (("download", "cache klines to CSV"), ("backtest", "backtest"),
                         ("walkforward", "walk-forward optimisation")):
         sp = sub.add_parser(name, help=help_)
@@ -162,9 +147,51 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _dashboard(args, scfg: StrategyConfig, rcfg: RiskConfig, client: BinanceClient) -> None:
+    from .web.server import App, serve
+
+    token = args.token
+    if args.host not in ("127.0.0.1", "localhost", "::1") and not token:
+        # Reachable from the network: never run open. Keep one stable token so
+        # a phone bookmark keeps working across restarts.
+        tf = HOME / ".dashboard_token"
+        token = tf.read_text(encoding="utf-8").strip() if tf.exists() else secrets.token_urlsafe(18)
+        tf.write_text(token, encoding="utf-8")
+    syms = [s.strip().upper() for s in (args.symbols or "").split(",") if s.strip()]
+    app = App(HOME, scfg, rcfg, args.market, syms, args.top, not args.no_footprint, args.notify, args.base_url, client)
+    if args.start:
+        app.start()
+    shown = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
+    url = f"http://{shown}:{args.port}/"
+    print(f"Accusignals dashboard: {url}", flush=True)
+    if token:
+        lan = _lan_ip()
+        print(f"From your phone (same Wi-Fi): http://{lan}:{args.port}/?token={token}", flush=True)
+    serve(app, args.host, args.port, token)
+
+
+def _lan_ip() -> str:
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))  # no packet is sent; just picks the outbound interface
+        return s.getsockname()[0]
+    except OSError:
+        return "YOUR-PC-IP"
+    finally:
+        s.close()
+
+
 def run(args) -> None:
     scfg, rcfg = load_configs(args.config, args)
     client = BinanceClient(args.market, base_url=args.base_url)
+    if args.cmd == "dashboard":  # start the UI even if Binance is down; it shows the error and retries
+        try:
+            client.sync_time()
+        except requests.RequestException as exc:
+            log.error("Binance API unreachable at startup: %s", exc)
+        return _dashboard(args, scfg, rcfg, client)
     offset = client.sync_time()
     if abs(offset) > 1000:
         log.warning("local clock is %.1fs off Binance time; using exchange time (consider syncing Windows time)",

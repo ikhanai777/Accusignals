@@ -17,6 +17,16 @@ key is needed, and it never places orders.
 | Windows (cmd / PowerShell) | `ACCUSIGNALS_DIR\windows\accusignals.bat` |
 | Linux / macOS / WSL2 | `ACCUSIGNALS_DIR/.venv/bin/python -m accusignals` |
 
+**Deployment:** to install and run it live on a Windows 10 PC, follow
+`ACCUSIGNALS_DIR/docs/DEPLOY_WINDOWS_HERMES.md` step by step.
+
+**Preferred live mode: the dashboard.** When `http://127.0.0.1:8765/healthz`
+answers `{"ok": true}`, the dashboard is already running its own scanner. Read
+signals from it (`GET /api/signals?limit=20`, `GET /api/status`) and don't
+start a second scanner. To start it, run
+`start "Accusignals" /min ACCUSIGNALS_DIR\windows\dashboard.bat`. The runbook
+lists every endpoint and each `tracking.status` value.
+
 First-time setup: on Windows, run `windows\setup.bat`. On Linux or WSL2, run
 `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
 **Always pass `--json`.** Each result is then one JSON object per line on

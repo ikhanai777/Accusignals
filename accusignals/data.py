@@ -21,6 +21,7 @@ ENDPOINTS = {
         "agg": "/api/v3/aggTrades",
         "ticker": "/api/v3/ticker/24hr",
         "info": "/api/v3/exchangeInfo",
+        "price": "/api/v3/ticker/price",
         "time": "/api/v3/time",
         "max_limit": 1000,
     },
@@ -30,6 +31,7 @@ ENDPOINTS = {
         "agg": "/fapi/v1/aggTrades",
         "ticker": "/fapi/v1/ticker/24hr",
         "info": "/fapi/v1/exchangeInfo",
+        "price": "/fapi/v2/ticker/price",
         "time": "/fapi/v1/time",
         "max_limit": 1500,
     },
@@ -172,6 +174,12 @@ class BinanceClient:
         out.index = pd.to_datetime(t["T"], unit="ms", utc=True)
         return out
 
+    def prices(self, symbols: list[str] | None = None) -> dict[str, float]:
+        """Latest traded price per symbol (one request for all symbols)."""
+        rows = self._get(self.cfg["price"], {})
+        want = set(symbols) if symbols else None
+        return {r["symbol"]: float(r["price"]) for r in rows if want is None or r["symbol"] in want}
+
     def tradable_symbols(self, quote: str = "USDT") -> set[str]:
         """Symbols currently trading (futures: perpetuals only). The 24h ticker
         still lists delisted/settling contracts, so filter against this."""
@@ -248,3 +256,34 @@ def load_csv(path: str | Path) -> pd.DataFrame:
     if "close_time" in df:
         df = df.drop(columns=["close_time"])
     return df
+
+
+def load_history(client: BinanceClient, symbols: list[str], interval: str, days: int, data_dir: str | Path,
+                 refresh: bool = False, min_bars: int = 500) -> dict[str, pd.DataFrame]:
+    """Real Binance history per symbol. A local CSV cache is topped up with the
+    newest closed candles on every call, so it is never stale."""
+    data = {}
+    now = client.now()
+    for sym in symbols:
+        path = Path(data_dir) / client.market / f"{sym}_{interval}.csv"
+        if path.exists() and not refresh:
+            df = load_csv(path)
+            if df.index[0] > now - pd.Timedelta(days=days):  # cache too short: fetch the full window
+                df = client.history(sym, interval, days)
+            else:
+                df = client.update(df, sym, interval)
+        else:
+            log.info("downloading %s %s %dd from Binance %s", sym, interval, days, client.market)
+            df = client.history(sym, interval, days)
+        df = df.drop(columns=["close_time"], errors="ignore")
+        df = df[df.index + pd.Timedelta(pandas_freq(interval)) <= now]  # closed candles only
+        save_csv(df, path)
+        df = df[df.index >= now - pd.Timedelta(days=days)]
+        gaps = missing_bars(df, interval)
+        if gaps:
+            log.warning("%s: %d missing candles in history (exchange downtime)", sym, gaps)
+        if len(df) < min_bars:
+            log.warning("%s: only %d candles, skipping", sym, len(df))
+            continue
+        data[sym] = df
+    return data

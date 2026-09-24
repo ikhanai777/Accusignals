@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-import time
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -144,17 +144,25 @@ class Scanner:
             except Exception as exc:
                 log.error("notification failed: %s", exc)
 
-    def run_forever(self) -> None:
-        """Scan a few seconds after every candle close (exchange time)."""
+    def seconds_to_next_scan(self) -> float:
         step = INTERVAL_MS[self.cfg.interval]
-        while True:
+        return (step - self.client.now_ms() % step) / 1000 + 3
+
+    def run_forever(self, stop: threading.Event | None = None, on_scan=None) -> None:
+        """Scan a few seconds after every candle close (exchange time) until
+        ``stop`` is set. ``on_scan(found)`` is called after each scan."""
+        stop = stop or threading.Event()
+        while not stop.is_set():
             try:
                 self.client.sync_time()
             except Exception as exc:
                 log.warning("time sync failed: %s", exc)
-            wait = (step - self.client.now_ms() % step) / 1000 + 3
+            wait = self.seconds_to_next_scan()
             log.info("next scan in %.0fs", wait)
-            time.sleep(wait)
+            if stop.wait(wait):
+                break
             log.info("scanning %d symbols", len(self.symbols))
             found = self.scan_once()
             log.info("scan done: %d signal(s)", len(found))
+            if on_scan:
+                on_scan(found)

@@ -17,7 +17,10 @@ dev = ["pytest>=7"]
 accusignals = "accusignals.cli:main"
 
 [tool.setuptools]
-packages = ["accusignals"]
+packages = ["accusignals", "accusignals.web"]
+
+[tool.setuptools.package-data]
+"accusignals.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

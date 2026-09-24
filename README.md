@@ -116,6 +116,33 @@ Outputs:
 - `logs\accusignals.log` is the rotating log.
 - `results\` holds the trade lists, equity curves and walk-forward folds.
 
+## Dashboard (desktop and mobile)
+
+```bat
+windows\dashboard.bat                  REM http://127.0.0.1:8765, with the live scanner running
+windows\dashboard.bat --host 0.0.0.0   REM also reachable from your phone on the same Wi-Fi (token protected)
+```
+
+The dashboard is a single-page web app served by Python's standard library, so
+there's nothing extra to install and it makes no external requests. It has
+five tabs:
+- **Signals:** live cards with entry, stop, TP1 and TP2, confidence, the
+  reasons that fired, the live price position between stop and target, and a
+  candle chart with the levels on tap.
+- **Track record:** each emitted signal replayed against the real Binance
+  candles that followed it: win rate, average R and cumulative R.
+- **Backtest:** runs walk-forward or backtest jobs on real history, with KPIs
+  and an equity curve.
+- **Settings:** market, timeframes, score threshold, pairs, footprint and
+  alerts.
+- **Logs.**
+
+It works in light and dark mode, can be added to a phone's home screen, and
+shows browser notifications for new signals.
+
+For start at logon, phone access and firewall setup, see
+[`docs/DEPLOY_WINDOWS_HERMES.md`](docs/DEPLOY_WINDOWS_HERMES.md).
+
 ## Running it from an agent (Hermes Agent)
 
 Add `--json` to any command. Results then go to stdout as JSON lines, and logs
@@ -182,7 +209,10 @@ accusignals/
   scanner.py     live scanner with footprint confirmation
   notify.py      console / Telegram / webhook output
   cli.py         command line (--json for agents)
-windows/         setup.bat, accusignals.bat, scan_loop.bat
+  tracker.py     live track record: replays emitted signals against later candles
+  web/           dashboard server (stdlib) and static mobile-first UI
+windows/         setup, accusignals, scan_loop, dashboard, install_autostart, allow_phone_access (.bat)
+docs/            DEPLOY_WINDOWS_HERMES.md runbook
 skills/          SKILL.md for Hermes Agent
 ```
 
