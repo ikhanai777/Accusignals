@@ -141,7 +141,8 @@ It works in light and dark mode, can be added to a phone's home screen, and
 shows browser notifications for new signals.
 
 For start at logon, phone access and firewall setup, see
-[`docs/DEPLOY_WINDOWS_HERMES.md`](docs/DEPLOY_WINDOWS_HERMES.md).
+[`docs/DEPLOY_WINDOWS_HERMES.md`](docs/DEPLOY_WINDOWS_HERMES.md). To have Nous
+Hermes Agent deploy it for you, paste [`docs/HERMES_PROMPT.md`](docs/HERMES_PROMPT.md) into Hermes.
 
 ## Running it from an agent (Hermes Agent)
 
