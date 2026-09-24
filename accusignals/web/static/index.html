@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Accusignals</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="icon.svg" alt="" width="24" height="24"><span>Accusignals</span></div>
+  <div class="status" id="status" role="status" aria-live="polite">
+    <span class="dot" id="status-dot"></span><span id="status-text">Connecting…</span>
+  </div>
+</header>
+
+<nav class="tabs" aria-label="Sections">
+  <button class="tab active" data-view="signals" aria-current="page">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/></svg><span>Signals</span></button>
+  <button class="tab" data-view="performance">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Track record</span></button>
+  <button class="tab" data-view="backtest">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><span>Backtest</span></button>
+  <button class="tab" data-view="settings">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg><span>Settings</span></button>
+  <button class="tab" data-view="logs">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Logs</span></button>
+</nav>
+
+<main>
+  <!-- SIGNALS -->
+  <section id="view-signals" class="view active" aria-labelledby="h-signals">
+    <div class="view-head">
+      <h1 id="h-signals">Live signals</h1>
+      <div class="actions">
+        <button class="btn" id="btn-scan">Scan now</button>
+        <button class="btn primary" id="btn-toggle">Start scanner</button>
+      </div>
+    </div>
+    <p class="sub" id="scan-meta">Real Binance data. Signals appear after each candle closes.</p>
+    <div class="kpis" id="signal-kpis"></div>
+    <div class="filters" role="group" aria-label="Filter signals">
+      <button class="chip-btn active" data-filter="all">All</button>
+      <button class="chip-btn" data-filter="live">Active</button>
+      <button class="chip-btn" data-filter="closed">Closed</button>
+    </div>
+    <div id="signal-list" class="cards"></div>
+  </section>
+
+  <!-- TRACK RECORD -->
+  <section id="view-performance" class="view" aria-labelledby="h-perf" hidden>
+    <div class="view-head"><h1 id="h-perf">Track record</h1></div>
+    <p class="sub">Every emitted signal replayed against the real Binance candles that followed it: next-candle entry, stop first on ambiguous candles, half off at TP1 then breakeven, fees included.</p>
+    <div class="kpis" id="perf-kpis"></div>
+    <div class="panel">
+      <h2>Cumulative R (closed signals)</h2>
+      <div class="chart-wrap"><canvas id="perf-chart" height="220" role="img" aria-label="Cumulative R of closed signals"></canvas><div class="tip" id="perf-tip" hidden></div></div>
+    </div>
+    <div class="panel">
+      <h2>Closed signals</h2>
+      <div class="table-wrap"><table class="tbl" id="perf-table"><thead><tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th>Outcome</th><th class="num">R</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- BACKTEST -->
+  <section id="view-backtest" class="view" aria-labelledby="h-bt" hidden>
+    <div class="view-head"><h1 id="h-bt">Backtest &amp; validation</h1></div>
+    <p class="sub">Downloads real Binance history. <b>Walk-forward</b> reports out-of-sample results only. Those are the numbers to trust. A plain backtest is in-sample and optimistic.</p>
+    <form class="panel form" id="job-form">
+      <label>Type
+        <select name="type"><option value="walkforward">Walk-forward (out-of-sample)</option><option value="backtest">Backtest (in-sample)</option></select>
+      </label>
+      <label>Days of history <input name="days" type="number" min="7" max="365" value="60" inputmode="numeric"></label>
+      <label>Top N liquid pairs <input name="top" type="number" min="1" max="30" value="5" inputmode="numeric"></label>
+      <label class="wide">Or symbols (comma separated) <input name="symbols" placeholder="BTCUSDT,ETHUSDT" autocapitalize="characters"></label>
+      <button class="btn primary wide" type="submit">Run</button>
+    </form>
+    <div id="job-status" class="sub"></div>
+    <div class="kpis" id="job-kpis"></div>
+    <div class="panel" id="job-chart-panel" hidden>
+      <h2 id="job-chart-title">Equity</h2>
+      <div class="chart-wrap"><canvas id="job-chart" height="220" role="img" aria-label="Equity curve"></canvas><div class="tip" id="job-tip" hidden></div></div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section id="view-settings" class="view" aria-labelledby="h-set" hidden>
+    <div class="view-head"><h1 id="h-set">Settings</h1></div>
+    <form class="panel form" id="settings-form">
+      <label>Market <select name="market"><option value="futures">USDT-M Futures</option><option value="spot">Spot</option></select></label>
+      <label>Entry timeframe <select name="interval"><option>1m</option><option>3m</option><option>5m</option><option>15m</option></select></label>
+      <label>Trend timeframe <select name="htf_interval"><option>15m</option><option>30m</option><option>1h</option><option>2h</option><option>4h</option></select></label>
+      <label>Min confluence score <input name="min_score" type="number" step="0.5" min="3" max="12" inputmode="decimal"></label>
+      <label>Top N liquid pairs <input name="top" type="number" min="1" max="50" inputmode="numeric"></label>
+      <label class="wide">Fixed symbols (blank = top N) <input name="symbols" placeholder="BTCUSDT,ETHUSDT,SOLUSDT" autocapitalize="characters"></label>
+      <label class="check"><input type="checkbox" name="use_footprint"> Footprint confirmation (aggTrades)</label>
+      <label class="check"><input type="checkbox" name="notify"> Telegram / webhook alerts</label>
+      <button class="btn primary wide" type="submit">Save</button>
+      <p class="hint wide">Saving restarts the scanner if it is running. A higher score means fewer signals with a higher win rate.</p>
+    </form>
+    <div class="panel">
+      <h2>Risk rules</h2>
+      <dl class="dl" id="risk-list"></dl>
+      <p class="hint">Change these in <code>config.json</code> (passed with <code>--config</code>) and restart the dashboard.</p>
+    </div>
+  </section>
+
+  <!-- LOGS -->
+  <section id="view-logs" class="view" aria-labelledby="h-logs" hidden>
+    <div class="view-head"><h1 id="h-logs">Logs</h1><button class="btn" id="btn-logs">Refresh</button></div>
+    <pre class="logs" id="logs"></pre>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="alert" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
