@@ -8,6 +8,7 @@ the concatenation of those out-of-sample windows.
 from __future__ import annotations
 
 import itertools
+import logging
 from dataclasses import replace
 
 import numpy as np
@@ -16,6 +17,8 @@ import pandas as pd
 from .backtest import metrics, simulate_portfolio, simulate_symbol, trades_frame
 from .risk import RiskConfig
 from .strategy import StrategyConfig, compute_features, generate_signals
+
+log = logging.getLogger("accusignals")
 
 DEFAULT_GRID = {
     "min_score": [5.0, 6.0, 7.0, 8.0],
@@ -52,7 +55,7 @@ def objective(tr: pd.DataFrame, min_trades: int) -> float:
 
 def walk_forward(data: dict[str, pd.DataFrame], base: StrategyConfig | None = None, rcfg: RiskConfig | None = None,
                  grid: dict | None = None, train_days: float = 21, test_days: float = 7, min_trades: int = 20,
-                 start_equity: float = 1000.0, verbose: bool = True):
+                 start_equity: float = 1000.0):
     base = base or StrategyConfig()
     rcfg = rcfg or RiskConfig()
     combos = _grid(grid or DEFAULT_GRID)
@@ -79,8 +82,7 @@ def walk_forward(data: dict[str, pd.DataFrame], base: StrategyConfig | None = No
         oos.append(tr)
         folds.append({"test_start": cursor, "params": best, "is_score": round(best_score, 3), "oos_trades": len(tr),
                       "oos_avg_r": round(float(tr["r_multiple"].mean()), 3) if len(tr) else None})
-        if verbose:
-            print(f"[wf] {cursor:%Y-%m-%d} best={best} is={best_score:.2f} oos_trades={len(tr)}")
+        log.info("walk-forward %s: best=%s in-sample=%.2f oos_trades=%d", f"{cursor:%Y-%m-%d}", best, best_score, len(tr))
         cursor += test
     all_oos = pd.concat(oos, ignore_index=True) if oos else trades_frame([])
     if not all_oos.empty:

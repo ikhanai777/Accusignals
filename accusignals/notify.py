@@ -8,19 +8,19 @@ import requests
 
 
 def format_signal(s: dict) -> str:
-    side = "LONG 🟢" if s["side"] == 1 else "SHORT 🔴"
+    # Plain ASCII: the Windows console (cp1252) can't print emoji.
     p = _prec(s["entry"])
     lines = [
-        f"{s['symbol']} {side}  [{s['interval']}]  confidence {s['confidence']:.0f}%  (score {s['score']:.1f})",
+        f"{s['symbol']} {s['side']}  [{s['market']} {s['interval']}]  confidence {s['confidence']:.0f}%  (score {s['score']:.1f})",
         f"  Entry  {s['entry']:.{p}f}",
         f"  SL     {s['sl']:.{p}f}  ({s['stop_pct']:.2f}%)",
         f"  TP1    {s['tp1']:.{p}f}  (close {int(s['tp1_fraction'] * 100)}%, move SL to breakeven)",
         f"  TP2    {s['tp2']:.{p}f}",
-        f"  Why:   {s['reasons']}",
+        f"  Why:   {', '.join(s['reasons'])}",
     ]
     if s.get("footprint") is not None:
         lines.append(f"  Footprint: {s['footprint']}")
-    lines.append(f"  Bar close: {s['time']}")
+    lines.append(f"  Bar close: {s['bar_close_time']:%Y-%m-%d %H:%M} UTC")
     return "\n".join(lines)
 
 

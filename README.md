@@ -70,37 +70,65 @@ tighter gets eaten by fees and noise.
 just in front of the next S/R zone if that comes first. A time stop exits after
 36 bars.
 
-## Install
+## Install on Windows 10
 
-```bash
-pip install -r requirements.txt        # numpy, pandas, requests
-pip install pytest && pytest           # 15 tests, incl. a no-look-ahead check
+1. Install Python 3.10 or newer from python.org, and tick **"Add python.exe to
+   PATH"** during setup.
+2. Double-click `windows\setup.bat`, or run it from cmd. It creates `.venv`,
+   installs numpy, pandas, requests and pytest, then runs a Binance
+   connectivity check.
+3. Use `windows\accusignals.bat <command>` for everything after that.
+
+Linux, macOS or WSL2: `python3 -m venv .venv && .venv/bin/pip install -r
+requirements.txt`, then `.venv/bin/python -m accusignals <command>`.
+
+No API key is needed. Everything uses Binance public market data, and there's
+no sample or synthetic data anywhere in the tool. Keep the Windows clock
+synced, although the tool measures its offset from Binance server time on every
+scan anyway.
+
+## Usage (Windows)
+
+```bat
+REM Connectivity, clock offset and the current most-liquid pairs
+windows\accusignals.bat health
+
+REM Score the last closed 5m candle on the 15 most liquid USDT-M perpetuals
+windows\accusignals.bat scan
+
+REM Run forever, scanning at each candle close; auto-restarts after network drops
+set TELEGRAM_BOT_TOKEN=...
+set TELEGRAM_CHAT_ID=...
+windows\scan_loop.bat
+
+REM Faster scalping: 1m entries with the 15m trend
+windows\accusignals.bat scan --interval 1m --htf 15m --symbols BTCUSDT,ETHUSDT,SOLUSDT
+
+REM Backtest 60 days of real history (cached in data\ and topped up on each run)
+windows\accusignals.bat backtest --top 10 --days 60
+
+REM THE number that matters: walk-forward, out of sample
+windows\accusignals.bat walkforward --top 10 --days 90 --train-days 21 --test-days 7
 ```
 
-No API key is needed. Everything uses public market data.
+Outputs:
+- `signals\signals.jsonl` gets every signal, one JSON object per line.
+- `logs\accusignals.log` is the rotating log.
+- `results\` holds the trade lists, equity curves and walk-forward folds.
 
-## Usage
+## Running it from an agent (Hermes Agent)
 
-```bash
-# Live: score the last closed 5m candle on the 15 most liquid USDT-M pairs
-python -m accusignals scan
+Add `--json` to any command. Results then go to stdout as JSON lines, and logs
+go to stderr. The exit code is `0` on success, `2` if Binance is unreachable,
+and `1` on any other error. Full agent instructions are in
+[`skills/accusignals/SKILL.md`](skills/accusignals/SKILL.md), a standard
+`SKILL.md` skill. Copy that folder into the Hermes skills directory. There's
+also a short summary in [`AGENTS.md`](AGENTS.md). The agent can either:
 
-# Keep running, scan at each candle close, push to Telegram
-export TELEGRAM_BOT_TOKEN=...  TELEGRAM_CHAT_ID=...   # or SIGNAL_WEBHOOK_URL=...
-python -m accusignals scan --loop --notify
-
-# Faster scalping: 1m entries with 15m trend
-python -m accusignals scan --interval 1m --htf 15m --symbols BTCUSDT,ETHUSDT,SOLUSDT
-
-# Backtest the last 60 days on the top 10 pairs (downloads and caches to data/)
-python -m accusignals backtest --top 10 --days 60
-
-# THE number that matters: walk-forward, out of sample
-python -m accusignals walkforward --top 10 --days 90 --train-days 21 --test-days 7
-
-# Offline sanity check on a synthetic random walk (should NOT be profitable)
-python -m accusignals demo
-```
+- call `windows\accusignals.bat scan --json` once per candle close (repeat
+  alerts are suppressed across runs), or
+- keep `windows\scan_loop.bat --json` running in the background and read new
+  lines from `signals\signals.jsonl`.
 
 Every setting can be overridden with `--config config.example.json`. Useful
 flags are `--market spot`, `--min-score 7`, and `--risk 0.5`. Spot fees switch
@@ -118,8 +146,8 @@ If `api.binance.com` is geo-blocked for you, spot data is also served at
 * Pivots and S/R levels exist only from the bar on which they were confirmed.
 * If a bar touches both the stop and a target, the **stop is assumed first**.
 * Taker fees (0.04% futures / 0.1% spot) and slippage are charged on every fill.
-* On a synthetic random walk the system loses a little (fees). That's what an
-  honest backtester should show on data with no edge.
+* Cached history is topped up with the newest closed candles before every run,
+  and gaps from exchange downtime are logged.
 * `walkforward` picks parameters on a rolling 21-day window and reports only the
   following unseen 7 days, stitched together.
 
@@ -135,7 +163,7 @@ rules are applied.
    with. Drop pairs that consistently lose.
 2. Raise `min_score` until expectancy peaks. Higher scores mean fewer trades but
    a higher win rate.
-3. Paper trade with `scan --loop` for 2–4 weeks and compare live fills with the
+3. Paper trade with `windows\scan_loop.bat` for 2–4 weeks and compare live fills with the
    backtest.
 4. Go live with small size (`--risk 0.25`) and scale up only after it matches.
 
@@ -143,7 +171,7 @@ rules are applied.
 
 ```
 accusignals/
-  data.py        Binance REST client (klines, aggTrades, top symbols), CSV cache, synthetic data
+  data.py        Binance REST client (klines, aggTrades, top symbols), server-time sync, CSV cache
   indicators.py  EMA/RSI/ATR/ADX/MACD/Stoch-RSI/Bollinger/VWAP bands/Supertrend/z-score
   structure.py   confirmed pivots, market structure, liquidity sweeps, S/R zones, candle patterns
   orderflow.py   delta, CVD, CVD divergence, absorption, footprint bars, volume profile
@@ -153,7 +181,9 @@ accusignals/
   optimize.py    walk-forward optimisation
   scanner.py     live scanner with footprint confirmation
   notify.py      console / Telegram / webhook output
-  cli.py         command line
+  cli.py         command line (--json for agents)
+windows/         setup.bat, accusignals.bat, scan_loop.bat
+skills/          SKILL.md for Hermes Agent
 ```
 
 *Not financial advice. Leveraged crypto trading can lose more than your stake.*

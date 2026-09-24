@@ -1,12 +1,14 @@
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 
 from accusignals import indicators as ind
 from accusignals import orderflow as of
 from accusignals import structure as st
 from accusignals.backtest import metrics, run_backtest, simulate_portfolio, simulate_symbol, trades_frame
-from accusignals.data import BinanceClient, klines_to_frame, synthetic_ohlcv
+from accusignals.data import BinanceClient, drop_unclosed, klines_to_frame, missing_bars
+from accusignals.notify import format_signal
 from accusignals.optimize import walk_forward
 from accusignals.risk import RiskConfig, position_size
 from accusignals.scanner import tick_for
@@ -14,8 +16,8 @@ from accusignals.strategy import StrategyConfig, generate_signals
 
 
 @pytest.fixture(scope="module")
-def df():
-    return synthetic_ohlcv(6000, "5m", seed=3)
+def df(binance_5m):
+    return binance_5m.iloc[-6000:]
 
 
 def test_no_lookahead(df):
@@ -143,23 +145,81 @@ def test_position_size_caps_leverage():
     assert position_size(1000, 100, 99.99, r) == pytest.approx(50.0)  # capped at 5x
 
 
-def test_klines_parsing_and_top_symbols():
-    row = [1700000000000, "1", "2", "0.5", "1.5", "10", 1700000299999, "15", 5, "6", "9", "0"]
-    f = klines_to_frame([row])
+class FakeResp:
+    def __init__(self, payload, status=200):
+        self.payload, self.status_code, self.headers, self.text = payload, status, {}, str(payload)
+
+    def json(self):
+        return self.payload
+
+
+class FakeSession:
+    """Replays Binance-format responses by endpoint so client logic can be
+    tested offline. The payloads mirror Binance's documented schema."""
+
+    def __init__(self, routes):
+        self.routes, self.calls, self.headers = routes, [], {}
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url, params))
+        for path, resp in self.routes.items():
+            if url.endswith(path):
+                return resp(params) if callable(resp) else resp
+        raise AssertionError(f"unexpected url {url}")
+
+
+def _kline(t_ms, px=1.0):
+    return [t_ms, str(px), str(px + 1), str(px - 0.5), str(px + 0.5), "10", t_ms + 299_999, "15", 5, "6", "9", "0"]
+
+
+def test_klines_parsing():
+    f = klines_to_frame([_kline(1700000000000)])
     assert f["taker_buy_volume"].iloc[0] == 6.0 and f.index[0].year == 2023
 
-    class Resp:
-        status_code, headers = 200, {}
-        def raise_for_status(self): pass
-        def json(self):
-            return [{"symbol": "BTCUSDT", "quoteVolume": "9e9"}, {"symbol": "USDCUSDT", "quoteVolume": "8e9"},
-                    {"symbol": "ETHUSDT", "quoteVolume": "5e9"}, {"symbol": "ETHBTC", "quoteVolume": "9e9"},
-                    {"symbol": "TINYUSDT", "quoteVolume": "1e3"}]
 
-    class Sess:
-        def get(self, *a, **k): return Resp()
+def test_top_symbols_filters_non_tradable():
+    info = {"symbols": [
+        {"symbol": "BTCUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+        {"symbol": "ETHUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+        {"symbol": "USDCUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+        {"symbol": "OLDUSDT", "status": "SETTLING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+        {"symbol": "BTCUSDT_250926", "status": "TRADING", "quoteAsset": "USDT", "contractType": "CURRENT_QUARTER"},
+    ]}
+    tick = [{"symbol": "BTCUSDT", "quoteVolume": "9e9"}, {"symbol": "USDCUSDT", "quoteVolume": "8e9"},
+            {"symbol": "ETHUSDT", "quoteVolume": "5e9"}, {"symbol": "OLDUSDT", "quoteVolume": "7e9"},
+            {"symbol": "BTCUSDT_250926", "quoteVolume": "9e9"}]
+    sess = FakeSession({"/exchangeInfo": FakeResp(info), "/ticker/24hr": FakeResp(tick)})
+    assert BinanceClient("futures", session=sess).top_symbols(5) == ["BTCUSDT", "ETHUSDT"]
 
-    assert BinanceClient("futures", session=Sess()).top_symbols(5) == ["BTCUSDT", "ETHUSDT"]
+
+def test_client_does_not_retry_bad_request():
+    sess = FakeSession({"/klines": FakeResp({"code": -1121, "msg": "Invalid symbol."}, status=400)})
+    with pytest.raises(requests.HTTPError):
+        BinanceClient("futures", session=sess).klines("NOPEUSDT", "5m")
+    assert len(sess.calls) == 1
+
+
+def test_update_appends_and_replaces_forming_bar():
+    t0 = 1700000000000
+    sess = FakeSession({"/klines": lambda p: FakeResp([_kline(p["startTime"], 2.0), _kline(p["startTime"] + 300_000, 3.0)])})
+    c = BinanceClient("futures", session=sess)
+    df = klines_to_frame([_kline(t0 - 300_000), _kline(t0, 1.0)])
+    out = c.update(df, "BTCUSDT", "5m")
+    assert len(out) == 3 and out["open"].iloc[1] == 2.0  # forming bar refreshed
+    assert sess.calls[0][1]["startTime"] == t0
+
+
+def test_drop_unclosed_uses_exchange_time():
+    df = klines_to_frame([_kline(1700000000000), _kline(1700000300000)])
+    now = pd.Timestamp(1700000300000 + 1000, unit="ms", tz="UTC")  # 1s into the second candle
+    assert len(drop_unclosed(df, now)) == 1
+
+
+def test_format_signal_is_ascii():
+    s = {"symbol": "BTCUSDT", "side": "LONG", "market": "futures", "interval": "5m", "confidence": 55.0, "score": 7.5,
+         "entry": 65000.0, "sl": 64800.0, "stop_pct": 0.31, "tp1": 65200.0, "tp1_fraction": 0.5, "tp2": 65400.0,
+         "reasons": ["htf_trend", "sweep"], "footprint": None, "bar_close_time": pd.Timestamp("2025-01-01", tz="UTC")}
+    format_signal(s).encode("cp1252")  # Windows console codepage
 
 
 def test_tick_for():
@@ -167,17 +227,35 @@ def test_tick_for():
     assert tick_for(0.5) == pytest.approx(0.0001)
 
 
-def test_random_walk_has_no_edge():
-    """On data with no edge, a correct backtester must not show one."""
-    data = {f"S{i}": synthetic_ohlcv(12000, "5m", seed=10 + i) for i in range(2)}
-    m, taken, curve = run_backtest(data)
-    assert m["trades"] > 50
-    assert m["avg_r"] < 0.15
+def test_backtest_on_real_history_is_consistent(binance_5m):
+    m, taken, curve = run_backtest({"BTCUSDT": binance_5m})
+    if m["trades"] == 0:
+        pytest.skip("no trades in this window")
+    assert (taken["exit_time"] >= taken["entry_time"]).all()
+    assert (taken["entry_time"] > taken["signal_time"]).all()  # filled on the bar after the signal
+    assert curve.iloc[-1] == pytest.approx(1000 + taken["pnl"].sum())
 
 
-def test_walk_forward_runs():
-    data = {"S0": synthetic_ohlcv(12000, "5m", seed=21)}
+def test_walk_forward_runs_on_real_history(binance_5m):
     grid = {"min_score": [5.0, 6.0], "tp2_r": [2.0]}
-    m, folds, taken, curve = walk_forward(data, grid=grid, train_days=14, test_days=7, min_trades=5, verbose=False)
-    assert len(folds) >= 3
-    assert (taken["entry_time"] >= folds["test_start"].min()).all()
+    m, folds, taken, curve = walk_forward({"BTCUSDT": binance_5m}, grid=grid, train_days=14, test_days=7, min_trades=5)
+    assert len(folds) >= 2
+    if len(taken):
+        assert (taken["entry_time"] >= folds["test_start"].min()).all()  # nothing from the first training window
+
+
+def test_real_history_is_clean(binance_5m):
+    assert binance_5m.index.is_monotonic_increasing and not binance_5m.index.duplicated().any()
+    assert (binance_5m["high"] >= binance_5m[["open", "close"]].max(axis=1)).all()
+    assert (binance_5m["taker_buy_volume"] <= binance_5m["volume"] + 1e-9).all()
+    assert missing_bars(binance_5m, "5m") < 50
+
+
+def test_scanner_cooldown_survives_restart(tmp_path):
+    from accusignals.scanner import Scanner
+
+    f = tmp_path / "signals.jsonl"
+    f.write_text('{"symbol": "BTCUSDT", "market": "futures", "interval": "5m", "direction": 1, '
+                 '"bar_close_time": "2025-01-01T00:05:00+00:00"}\nnot json\n', encoding="utf-8")
+    sc = Scanner(BinanceClient("futures", session=FakeSession({})), ["BTCUSDT"], StrategyConfig(), signals_file=f)
+    assert sc.last_alert["BTCUSDT"] == (pd.Timestamp("2025-01-01T00:05:00+00:00"), 1)
